@@ -67,7 +67,7 @@ export function HomePage() {
 
       <section className="trust-strip" aria-label="CKEFA Media capabilities">
         <div className="page-shell trust-strip__grid">
-          <div><strong>03</strong><span>Veo cameras within our production fleet</span></div>
+          <div><strong>Multi</strong><span>Multiple camera setups available</span></div>
           <div><Radio /><span>Live and recorded match coverage</span></div>
           <div><Users /><span>Built for clubs, players, families and scouts</span></div>
           <div><MapPin /><span>Grassroots knowledge, professional delivery</span></div>
@@ -170,3 +170,4 @@ export function HomePage() {
     </div>
   )
 }
+
