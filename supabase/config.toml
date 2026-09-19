@@ -1,0 +1,11 @@
+project_id = "replace-with-your-project-ref"
+
+[functions.create-checkout-session]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.booking-confirmation]
+verify_jwt = false
+static_files = [ "./functions/booking-confirmation/assets/*" ]
