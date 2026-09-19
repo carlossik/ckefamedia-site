@@ -5,6 +5,7 @@ import { BookingPage } from './pages/BookingPage'
 import { ContactPage } from './pages/ContactPage'
 import { HomePage } from './pages/HomePage'
 import { PaymentStatusPage } from './pages/PaymentStatusPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { ServicesPage } from './pages/ServicesPage'
 
 const AdminPage = lazy(async () => {
@@ -23,7 +24,21 @@ export default function App() {
         <Route path="/booking/success" element={<PaymentStatusPage status="success" />} />
         <Route path="/booking/cancelled" element={<PaymentStatusPage status="cancelled" />} />
       </Route>
-      <Route path="/admin" element={<Suspense fallback={<div className="admin-state"><h1>Loading administration portal…</h1></div>}><AdminPage /></Suspense>} />
+
+      <Route
+        path="/admin/reset-password"
+        element={<ResetPasswordPage />}
+      />
+
+      <Route
+        path="/admin"
+        element={
+          <Suspense fallback={<div className="admin-state"><h1>Loading administration portal...</h1></div>}>
+            <AdminPage />
+          </Suspense>
+        }
+      />
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
