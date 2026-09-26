@@ -35,6 +35,7 @@ type BookingRow = {
   discount_label: string | null
   discount_type: 'percentage' | 'fixed' | 'complimentary' | null
   discount_value: number | null
+  deposit_discount_pence: number
   operations_status: string
   payment_verification_status: string
   settlement_status: string
@@ -52,7 +53,7 @@ type BookingSettings = {
 
 type EmailContent = { text: string; html: string }
 
-const bookingSelect = 'id,reference,customer_name,customer_email,customer_phone,organisation_name,service_name,event_start,venue_name,postcode,home_team,away_team,age_group,competition,amount_due_pence,amount_paid_pence,quoted_total_pence,quoted_discount_pence,net_total_pence,discount_code,discount_label,discount_type,discount_value,operations_status,payment_verification_status,settlement_status,balance_payment_url'
+const bookingSelect = 'id,reference,customer_name,customer_email,customer_phone,organisation_name,service_name,event_start,venue_name,postcode,home_team,away_team,age_group,competition,amount_due_pence,amount_paid_pence,quoted_total_pence,quoted_discount_pence,net_total_pence,discount_code,discount_label,discount_type,discount_value,deposit_discount_pence,operations_status,payment_verification_status,settlement_status,balance_payment_url'
 const money = (pence: number) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(pence / 100)
 const date = (value: string) => new Intl.DateTimeFormat('en-GB', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/London' }).format(new Date(value))
 const escapeHtml = (value: string | null | undefined) => String(value ?? '')
@@ -68,10 +69,13 @@ const bookingLogoUrl = () => {
 }
 
 function discountAmountForTotal(booking: BookingRow, grossTotalPence: number) {
-  if (!booking.discount_type || !booking.discount_value || grossTotalPence <= 0) return 0
+  if (!booking.discount_type || grossTotalPence <= 0) return 0
   if (booking.discount_type === 'complimentary') return grossTotalPence
-  if (booking.discount_type === 'percentage') return Math.min(grossTotalPence, Math.round(grossTotalPence * booking.discount_value / 100))
-  return Math.min(grossTotalPence, booking.discount_value)
+
+  // Percentage/fixed discounts are awarded once when the deposit is created.
+  // Preserve that exact discount for the final agreed price so the customer
+  // is not given a second/larger discount when the final quote is entered.
+  return Math.min(grossTotalPence, Math.max(booking.deposit_discount_pence ?? 0, 0))
 }
 
 function finalTotal(booking: BookingRow) {

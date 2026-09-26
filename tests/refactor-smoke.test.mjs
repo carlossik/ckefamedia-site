@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from 'node:fs'
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
 test('real CKEFA Media logo is wired into the shared brand component', () => {
+  
   assert.equal(existsSync(new URL('../public/ckefa-media-logo.jpeg', import.meta.url)), true)
   assert.match(read('src/components/Brand.tsx'), /ckefa-media-logo\.jpeg/)
 })
@@ -115,12 +116,24 @@ test('discount and complimentary codes are supported without exposing admin code
   assert.match(bookingLib, /preview_media_discount_code/)
 })
 
-test('booking confirmation embeds the project logo and distinguishes balance-due from paid-in-full email copy', () => {
+
+test('percentage and fixed discounts are applied once and retained at final confirmation', () => {
+  const admin = read('src/pages/AdminPage.tsx')
+  const confirmation = read('supabase/functions/booking-confirmation/index.ts')
+
+  assert.match(admin, /booking\.deposit_discount_pence/)
+  assert.match(confirmation, /deposit_discount_pence/)
+  assert.match(confirmation, /Math\.max\(booking\.deposit_discount_pence \?\? 0, 0\)/)
+  assert.doesNotMatch(confirmation, /grossTotalPence \* booking\.discount_value \/ 100/)
+  assert.match(admin, /discount already awarded at booking will be retained/i)
+})
+
+test('booking confirmation references the project logo and distinguishes balance-due from paid-in-full email copy', () => {
   const notification = read('supabase/functions/booking-confirmation/index.ts')
   const config = read('supabase/config.toml')
   assert.equal(existsSync(new URL('../supabase/functions/booking-confirmation/assets/ckefa-media-logo.jpeg', import.meta.url)), true)
-  assert.match(notification, /cid:ckefa-media-logo/)
-  assert.match(notification, /content_id:\s*'ckefa-media-logo'/)
+  assert.match(notification, /booking-confirmation\?asset=logo/)
+  assert.match(notification, /escapeHtml\(logoUrl\)/)
   assert.match(config, /static_files/)
   assert.match(notification, /Pay remaining balance/)
   assert.match(notification, /No further payment required/)
