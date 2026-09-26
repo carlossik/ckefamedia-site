@@ -194,18 +194,62 @@ export function AdminPage() {
     const now = new Date().toISOString()
     let changes: Record<string, unknown> = {}
 
-    if (action === 'verify_payment') {
-      changes = {
-        payment_verification_status: 'verified',
-        payment_status: 'paid',
-        amount_paid_pence: booking.amount_due_pence,
-        payment_verified_at: now,
-        payment_verified_by: userId,
-        operations_status: 'awaiting_confirmation',
-        settlement_status: booking.payment_policy_snapshot === 'full_payment_before_confirmation' ? 'paid_in_full' : 'deposit_paid',
-        hold_expires_at: null,
-      }
+   if (action === 'verify_payment') {
+  const isManualPayment =
+    booking.payment_verification_status !== 'pending_verification'
+
+  let paypalReference = ''
+
+  if (isManualPayment) {
+    if (
+      booking.operations_status !== 'provisional' ||
+      (booking.payment_method && booking.payment_method !== 'paypal') ||
+      booking.amount_paid_pence > 0
+    ) {
+      setMessage('This booking is not eligible for manual PayPal verification.')
+      return
     }
+
+    const enteredReference = window.prompt(
+      'Enter the PayPal transaction ID after checking the payment in PayPal:'
+    )
+
+    if (enteredReference === null) return
+
+    paypalReference = enteredReference.trim()
+
+    if (!paypalReference) {
+      setMessage('A PayPal transaction ID is required.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Confirm that ${formatMoney(booking.amount_due_pence)} has been received for booking ${booking.reference}?`
+    )
+
+    if (!confirmed) return
+  }
+
+  changes = {
+    payment_verification_status: 'verified',
+    payment_status: 'paid',
+    amount_paid_pence: booking.amount_due_pence,
+    payment_verified_at: now,
+    payment_verified_by: userId,
+    operations_status: 'awaiting_confirmation',
+    settlement_status:
+      booking.payment_policy_snapshot === 'full_payment_before_confirmation'
+        ? 'paid_in_full'
+        : 'deposit_paid',
+    hold_expires_at: null,
+    ...(paypalReference
+      ? {
+      customer_payment_reference: paypalReference,
+      payment_method: 'paypal',
+    }
+  : {}),
+  }
+}
     if (action === 'reject_payment') {
       changes = {
         payment_verification_status: 'rejected',
@@ -431,7 +475,31 @@ export function AdminPage() {
                   <button className="button button--small button--primary" type="button" onClick={() => void runConfirmationAction(booking, 'confirm')}><CheckCircle2 /> Accept & email customer</button>
                   <button className="button button--small button--danger" type="button" onClick={() => void runBookingAction(booking, 'decline')}><Ban /> Decline</button>
                 </> : null}
-                {booking.operations_status === 'provisional' && booking.payment_verification_status !== 'pending_verification' ? <button className="button button--small button--danger" type="button" onClick={() => void runBookingAction(booking, 'decline')}><Ban /> Decline</button> : null}
+               {booking.operations_status === 'provisional' &&
+ booking.payment_verification_status !== 'pending_verification' ? (
+  <>
+    {booking.amount_due_pence > 0 &&
+     booking.amount_paid_pence === 0 &&
+     (!booking.payment_method || booking.payment_method === 'paypal') ? (
+      <button
+        className="button button--small button--primary"
+        type="button"
+        onClick={() => void runBookingAction(booking, 'verify_payment')}
+      >
+        <CircleDollarSign />
+        Record verified PayPal deposit ({formatMoney(booking.amount_due_pence)})
+      </button>
+    ) : null}
+
+    <button
+      className="button button--small button--danger"
+      type="button"
+      onClick={() => void runBookingAction(booking, 'decline')}
+    >
+      <Ban /> Decline
+    </button>
+  </>
+) : null}
                 {booking.operations_status === 'confirmed' ? <>
                   {balanceDue > 0 ? <><div className="workflow-fields workflow-fields--single"><label className="field"><span>Balance payment reference (optional)</span><input value={balanceReferenceDrafts[booking.id] ?? ''} onChange={(e) => setBalanceReferenceDrafts((current) => ({ ...current, [booking.id]: e.target.value }))} placeholder={booking.reference} /></label></div><button className="button button--small button--primary" type="button" onClick={() => void runConfirmationAction(booking, 'balance_paid')}><CircleDollarSign /> Mark balance paid ({formatMoney(balanceDue)})</button></> : null}
                   <button className="button button--small button--outline" type="button" onClick={() => void runConfirmationAction(booking, 'resend_confirmation')}><RefreshCw /> Resend confirmation</button>
