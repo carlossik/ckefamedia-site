@@ -146,7 +146,7 @@ test('administrators can archive bookings and protect paid bookings from test de
   for (const label of ['Archive booking', 'Restore booking', 'Delete test booking permanently']) {
     assert.match(admin, new RegExp(label))
   }
-  assert.match(admin, /entered !== booking\.reference/)
+  assert.match(admin, /requiredInput: booking\.reference/)
   assert.match(admin, /supabase\.rpc\('delete_media_test_booking'/)
   assert.match(migration, /is_media_admin\('administrator'\)/)
   assert.match(migration, /current_booking\.amount_paid_pence <> 0/)
@@ -170,4 +170,50 @@ test('new booking email alert is server-only, deduplicated and sent to two desti
   assert.match(migration, /booking_id uuid primary key/)
   assert.match(config, /\[functions\.booking-notification\]/)
   assert.doesNotMatch(read('src/lib/booking.ts'), /booking-notification/)
+})
+
+
+test('administrator-attested paid test deletion is audited and real bookings stay protected', () => {
+  const migration = read('supabase/migrations/202610020002_audited_test_booking_cleanup.sql')
+  const admin = read('src/pages/AdminPage.tsx')
+  for (const evidence of [
+    'protected_from_test_deletion',
+    'CKM-20260926-6EDA88',
+    'media_booking_deletion_audit',
+    "public.is_media_admin('administrator')",
+    'confirmed_test_booking is distinct from true',
+    'current_booking.archived_at is null',
+    'typed_booking_reference is distinct from current_booking.reference',
+    'insert into public.media_booking_deletion_audit',
+    'drop function if exists public.delete_media_test_booking(uuid, text)',
+    'as restrictive for delete to authenticated',
+  ]) {
+    const location = evidence === 'as restrictive for delete to authenticated'
+      ? read('supabase/migrations/202610020001_booking_alerts_and_cleanup.sql')
+      : migration
+    assert.ok(location.includes(evidence), `Missing database protection: ${evidence}`)
+  }
+  assert.match(admin, /confirmed_test_booking: true/)
+  assert.match(admin, /requiredInput: booking\.reference/)
+  assert.match(admin, /protected_from_test_deletion/)
+  assert.match(admin, /I confirm this is a TEST booking/)
+  assert.doesNotMatch(admin, /booking\.amount_paid_pence === 0 && !booking\.customer_payment_reference/)
+})
+
+test('all admin destructive actions use reusable branded dialogues instead of browser popups', () => {
+  const admin = read('src/pages/AdminPage.tsx')
+  const dialog = read('src/components/ActionDialog.tsx')
+  const css = read('src/styles.css')
+  for (const name of ['archiveBooking', 'deleteTestBooking', 'protectRealBooking',
+    'deleteDiscountCode', 'removeBlackout', 'confirmBookingDecision']) {
+    assert.match(admin, new RegExp(name))
+  }
+  assert.match(admin, /<ActionDialog request={dialog}/)
+  assert.match(dialog, /aria-modal="true"/)
+  assert.match(dialog, /requiredInput/)
+  assert.match(dialog, /acknowledgement/)
+  assert.match(dialog, /event.key === 'Escape'/)
+  assert.match(dialog, /onKeyDown/)
+  assert.match(css, /action-dialog-backdrop/)
+  assert.doesNotMatch(admin, /window\.(?:alert|confirm|prompt)\s*\(/)
 })

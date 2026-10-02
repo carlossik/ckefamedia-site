@@ -149,6 +149,7 @@ export type BookingRecord = {
   hold_expires_at: string | null
   created_at: string
   archived_at: string | null
+  protected_from_test_deletion: boolean
 }
 
 export type BlackoutPeriod = {

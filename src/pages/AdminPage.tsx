@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ActionDialog, type ActionDialogRequest } from '../components/ActionDialog'
 import { Brand } from '../components/Brand'
 import { formatDateTime, formatMoney } from '../lib/format'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
@@ -95,6 +96,7 @@ export function AdminPage() {
   const [bookings, setBookings] = useState<BookingRecord[]>([])
   const [showArchivedBookings, setShowArchivedBookings] = useState(false)
   const [cleanupBookingId, setCleanupBookingId] = useState<string | null>(null)
+  const [dialog, setDialog] = useState<ActionDialogRequest | null>(null)
   const [services, setServices] = useState<ServicePackage[]>([])
   const [settings, setSettings] = useState<Settings>(defaultSettings)
   const [blackouts, setBlackouts] = useState<BlackoutPeriod[]>([])
@@ -191,7 +193,7 @@ export function AdminPage() {
 
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setAccess(null) }
 
-  const runBookingAction = async (booking: BookingRecord, action: BookingAction) => {
+  const runBookingAction = async (booking: BookingRecord, action: BookingAction, manualPaypalReference?: string) => {
     if (!supabase) return
     setMessage('')
     const { data: userData } = await supabase.auth.getUser()
@@ -211,28 +213,24 @@ export function AdminPage() {
       (booking.payment_method && booking.payment_method !== 'paypal') ||
       booking.amount_paid_pence > 0
     ) {
-      setMessage('This booking is not eligible for manual PayPal verification.')
+      throw new Error('This booking is not eligible for manual PayPal verification.')
+    }
+
+    if (manualPaypalReference === undefined) {
+      setDialog({
+        title: 'Verify PayPal deposit',
+        description: `Only verify a payment you have found in your receiving PayPal account. The booking expects ${formatMoney(booking.amount_due_pence)} for ${booking.reference}.`,
+        confirmLabel: 'Record verified payment',
+        inputLabel: 'PayPal transaction ID',
+        inputPlaceholder: 'Enter the transaction ID from PayPal',
+        acknowledgement: 'I have checked PayPal Activity and verified that this exact payment has arrived.',
+        onConfirm: async (reference) => { await runBookingAction(booking, 'verify_payment', reference) },
+      })
       return
     }
 
-    const enteredReference = window.prompt(
-      'Enter the PayPal transaction ID after checking the payment in PayPal:'
-    )
-
-    if (enteredReference === null) return
-
-    paypalReference = enteredReference.trim()
-
-    if (!paypalReference) {
-      setMessage('A PayPal transaction ID is required.')
-      return
-    }
-
-    const confirmed = window.confirm(
-      `Confirm that ${formatMoney(booking.amount_due_pence)} has been received for booking ${booking.reference}?`
-    )
-
-    if (!confirmed) return
+    paypalReference = manualPaypalReference.trim()
+    if (!paypalReference) throw new Error('A verified PayPal transaction ID is required.')
   }
 
   changes = {
@@ -288,8 +286,9 @@ export function AdminPage() {
     }
 
     const { error } = await supabase.from('media_bookings').update(changes).eq('id', booking.id)
-    setMessage(error ? error.message : 'Booking workflow updated.')
-    if (!error) await loadAdminData()
+    if (error) { setMessage(error.message); throw new Error(error.message) }
+    setMessage('Booking workflow updated.')
+    await loadAdminData()
   }
 
   const runConfirmationAction = async (booking: BookingRecord, action: 'confirm' | 'resend_confirmation' | 'balance_paid') => {
@@ -387,11 +386,20 @@ export function AdminPage() {
     await loadAdminData()
   }
 
-  const removeBlackout = async (id: string) => {
+  const removeBlackout = (id: string) => {
     if (!supabase) return
-    const { error } = await supabase.from('media_blackout_periods').delete().eq('id', id)
-    setMessage(error ? error.message : 'Calendar blackout removed.')
-    if (!error) await loadAdminData()
+    setDialog({
+      title: 'Remove calendar blackout?',
+      description: 'Removing this blackout may make the affected dates available for new bookings.',
+      confirmLabel: 'Remove blackout',
+      tone: 'danger',
+      onConfirm: async () => {
+        const { error } = await supabase.from('media_blackout_periods').delete().eq('id', id)
+        if (error) throw new Error(error.message)
+        setMessage('Calendar blackout removed.')
+        await loadAdminData()
+      },
+    })
   }
 
 
@@ -430,50 +438,112 @@ export function AdminPage() {
     if (!error) await loadAdminData()
   }
 
-  const deleteDiscountCode = async (discount: DiscountCode) => {
+  const deleteDiscountCode = (discount: DiscountCode) => {
     if (!supabase || access?.role !== 'administrator') return
-    const { error } = await supabase.from('media_discount_codes').delete().eq('id', discount.id)
-    setMessage(error ? error.message : `${discount.code} deleted.`)
-    if (!error) await loadAdminData()
-  }
-
-  // Archiving hides records from this portal; it never alters their financial history.
-  // Permanent deletion is restricted server-side to unpaid, unconfirmed test records.
-  const archiveBooking = async (booking: BookingRecord, restore: boolean) => {
-    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
-    const verb = restore ? 'Restore' : 'Archive'
-    if (!window.confirm(`${verb} booking ${booking.reference} for ${booking.customer_name}? ${restore ? 'It will return to the active list.' : 'It will be hidden from the active list, not deleted. This does not cancel the booking or release its slot.'}`)) return
-    setCleanupBookingId(booking.id)
-    const { data, error } = await supabase.from('media_bookings')
-      .update({ archived_at: restore ? null : new Date().toISOString() })
-      .eq('id', booking.id)
-      .select('id')
-    setCleanupBookingId(null)
-    setMessage(error ? error.message : !data?.length ? 'No booking was updated. Check administrator permissions.' : `${booking.reference} ${restore ? 'restored' : 'archived'}.`)
-    if (!error && data?.length) await loadAdminData()
-  }
-
-  const deleteTestBooking = async (booking: BookingRecord) => {
-    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
-    if (!booking.archived_at) { setMessage('Archive this booking first, then select Delete test booking.'); return }
-    if (booking.amount_paid_pence > 0 || booking.customer_payment_reference || booking.confirmation_email_sent_at) {
-      setMessage('A payment or customer confirmation is recorded for this booking. Keep it archived instead.')
-      return
-    }
-    const entered = window.prompt(`To permanently delete this UNPAID test booking, type its exact reference:
-${booking.reference}
-
-This cannot be undone.`)
-    if (entered !== booking.reference) { if (entered !== null) setMessage('Booking reference did not match. Nothing deleted.'); return }
-    if (!window.confirm(`Permanently delete ${booking.reference}? This cannot be undone.`)) return
-    setCleanupBookingId(booking.id)
-    const { error } = await supabase.rpc('delete_media_test_booking', {
-      requested_booking_id: booking.id,
-      typed_booking_reference: entered,
+    setDialog({
+      title: `Delete discount code ${discount.code}?`,
+      description: 'Existing bookings keep their awarded discounts. The code will no longer be available for future bookings.',
+      confirmLabel: 'Delete discount code',
+      tone: 'danger',
+      onConfirm: async () => {
+        const { error } = await supabase.from('media_discount_codes').delete().eq('id', discount.id)
+        if (error) throw new Error(error.message)
+        setMessage(`${discount.code} deleted.`)
+        await loadAdminData()
+      },
     })
-    setCleanupBookingId(null)
-    setMessage(error ? error.message : `Test booking ${booking.reference} permanently deleted.`)
-    if (!error) await loadAdminData()
+  }
+
+  const confirmBookingDecision = (booking: BookingRecord, action: 'decline' | 'refund') => {
+    setDialog({
+      title: action === 'decline' ? 'Decline booking?' : 'Mark refund as completed?',
+      description: action === 'decline'
+        ? `Decline ${booking.reference}? If payment has been recorded, the booking will move to refund pending.`
+        : `Only mark ${booking.reference} as refunded after confirming that the refund has actually been issued to the customer.`,
+      confirmLabel: action === 'decline' ? 'Decline booking' : 'Mark refunded',
+      tone: 'danger',
+      acknowledgement: action === 'refund' ? 'I have verified that the refund has been issued.' : undefined,
+      onConfirm: async () => { await runBookingAction(booking, action) },
+    })
+  }
+
+  // Archiving does not alter the booking's financial history.
+  const archiveBooking = (booking: BookingRecord, restore: boolean) => {
+    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
+    setDialog({
+      title: restore ? 'Restore booking?' : 'Archive booking?',
+      description: `${booking.reference} — ${booking.customer_name}. ${restore
+        ? 'This booking will return to the active list.'
+        : 'This only hides the booking from the active list; it does not cancel the job or release its time slot.'}`,
+      confirmLabel: restore ? 'Restore booking' : 'Archive booking',
+      onConfirm: async () => {
+        setCleanupBookingId(booking.id)
+        try {
+          const { data, error } = await supabase.from('media_bookings')
+            .update({ archived_at: restore ? null : new Date().toISOString() })
+            .eq('id', booking.id).select('id')
+          if (error) throw new Error(error.message)
+          if (!data?.length) throw new Error('No booking was updated. Check administrator permissions.')
+          setMessage(`${booking.reference} ${restore ? 'restored' : 'archived'}.`)
+          await loadAdminData()
+        } finally {
+          setCleanupBookingId(null)
+        }
+      },
+    })
+  }
+
+  // A one-way protection flag distinguishes genuine jobs from simulated bookings.
+  const protectRealBooking = (booking: BookingRecord) => {
+    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
+    setDialog({
+      title: 'Protect this genuine booking?',
+      description: `${booking.reference} will be permanently excluded from test-booking deletion. Use this for real customer jobs, including paid jobs. This cannot be reversed in the portal.`,
+      confirmLabel: 'Protect real booking',
+      acknowledgement: 'I confirm that this is a genuine customer booking.',
+      onConfirm: async () => {
+        const { error } = await supabase.from('media_bookings')
+          .update({ protected_from_test_deletion: true }).eq('id', booking.id)
+        if (error) throw new Error(error.message)
+        setMessage(`${booking.reference} is protected from test deletion.`)
+        await loadAdminData()
+      },
+    })
+  }
+
+  const deleteTestBooking = (booking: BookingRecord) => {
+    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
+    if (!booking.archived_at) { setMessage('Archive the booking before deleting it.'); return }
+    if (booking.protected_from_test_deletion) { setMessage('This genuine booking is protected and cannot be deleted.'); return }
+    const simulatedFinancialHistory = booking.amount_paid_pence > 0 ||
+      Boolean(booking.customer_payment_reference || booking.confirmation_email_sent_at || booking.payment_verified_at)
+    setDialog({
+      title: 'Permanently delete test booking?',
+      description: `${booking.reference} — ${booking.customer_name}. This removes the booking and any linked notification delivery record. ${simulatedFinancialHistory
+        ? 'WARNING: The system records payment or confirmation history. Delete ONLY if these were test transactions and no genuine customer funds, refunds or obligations are involved.'
+        : 'This archived record will be permanently deleted.'} An audit of who deleted the record will be retained. This action cannot be undone.`,
+      confirmLabel: 'Permanently delete test booking',
+      tone: 'danger',
+      inputLabel: `Type the exact booking reference: ${booking.reference}`,
+      inputPlaceholder: booking.reference,
+      requiredInput: booking.reference,
+      acknowledgement: 'I confirm this is a TEST booking, and there are no real customer payments, refunds, or outstanding obligations associated with it.',
+      onConfirm: async (reference) => {
+        setCleanupBookingId(booking.id)
+        try {
+          const { error } = await supabase.rpc('delete_media_test_booking', {
+            requested_booking_id: booking.id,
+            typed_booking_reference: reference,
+            confirmed_test_booking: true,
+          })
+          if (error) throw new Error(error.message)
+          setMessage(`Test booking ${booking.reference} permanently deleted; audit retained.`)
+          await loadAdminData()
+        } finally {
+          setCleanupBookingId(null)
+        }
+      },
+    })
   }
 
   const visibleBookings = bookings.filter((booking) => showArchivedBookings ? Boolean(booking.archived_at) : !booking.archived_at)
@@ -525,7 +595,7 @@ This cannot be undone.`)
                     <label className="field"><span>Balance payment link (optional)</span><input type="url" value={balanceUrlDrafts[booking.id] ?? booking.balance_payment_url ?? ''} onChange={(e) => setBalanceUrlDrafts((current) => ({ ...current, [booking.id]: e.target.value }))} placeholder="PayPal / future Stripe link" /></label>
                   </div>
                   <button className="button button--small button--primary" type="button" onClick={() => void runConfirmationAction(booking, 'confirm')}><CheckCircle2 /> Accept & email customer</button>
-                  <button className="button button--small button--danger" type="button" onClick={() => void runBookingAction(booking, 'decline')}><Ban /> Decline</button>
+                  <button className="button button--small button--danger" type="button" onClick={() => confirmBookingDecision(booking, 'decline')}><Ban /> Decline</button>
                 </> : null}
                {booking.operations_status === 'provisional' &&
  booking.payment_verification_status !== 'pending_verification' ? (
@@ -546,7 +616,7 @@ This cannot be undone.`)
     <button
       className="button button--small button--danger"
       type="button"
-      onClick={() => void runBookingAction(booking, 'decline')}
+      onClick={() => confirmBookingDecision(booking, 'decline')}
     >
       <Ban /> Decline
     </button>
@@ -557,15 +627,17 @@ This cannot be undone.`)
                   <button className="button button--small button--outline" type="button" onClick={() => void runConfirmationAction(booking, 'resend_confirmation')}><RefreshCw /> Resend confirmation</button>
                   {booking.settlement_status === 'paid_in_full' ? <button className="button button--small button--outline" type="button" onClick={() => void runBookingAction(booking, 'complete')}><CheckCircle2 /> Complete production</button> : null}
                 </> : null}
-                {booking.operations_status === 'refund_pending' ? <button className="button button--small button--danger" type="button" onClick={() => void runBookingAction(booking, 'refund')}><RotateCcw /> Mark refunded</button> : null}
+                {booking.operations_status === 'refund_pending' ? <button className="button button--small button--danger" type="button" onClick={() => confirmBookingDecision(booking, 'refund')}><RotateCcw /> Mark refunded</button> : null}
               </div>
               {access.role === 'administrator' ? <div className="booking-cleanup-actions">
                 {booking.archived_at ? <>
                   <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void archiveBooking(booking, true)}>Restore booking</button>
-                  {booking.amount_paid_pence === 0 && !booking.customer_payment_reference && !booking.confirmation_email_sent_at ?
-                    <button className="button button--small button--danger" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void deleteTestBooking(booking)}><Trash2 /> Delete test booking permanently</button> :
-                    <small>Payment or confirmation history is retained. This booking cannot be permanently deleted through the portal.</small>}
-                </> : <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void archiveBooking(booking, false)}>Archive booking</button>}
+                  {booking.protected_from_test_deletion ?
+                    <small className="booking-protected-label">Protected genuine booking — permanent deletion disabled.</small> :
+                    <button className="button button--small button--danger" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => deleteTestBooking(booking)}><Trash2 /> Delete test booking permanently</button>}
+                </> : <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => archiveBooking(booking, false)}>Archive booking</button>}
+                {!booking.protected_from_test_deletion ?
+                  <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => protectRealBooking(booking)}>Protect genuine booking</button> : null}
               </div> : null}
             </div>
           </article>
@@ -589,7 +661,7 @@ This cannot be undone.`)
 
       <section className="admin-panel"><div className="admin-panel__heading"><div><h2>Calendar blackouts</h2><p>Block holidays, maintenance windows, staff unavailability or any period that must show as unavailable publicly.</p></div></div><form className="blackout-form" onSubmit={addBlackout}><label className="field"><span>Start</span><input type="datetime-local" required value={blackoutStartsAt} onChange={(e) => setBlackoutStartsAt(e.target.value)} /></label><label className="field"><span>End</span><input type="datetime-local" required value={blackoutEndsAt} onChange={(e) => setBlackoutEndsAt(e.target.value)} /></label><label className="field"><span>Reason</span><input placeholder="e.g. Equipment maintenance" value={blackoutReason} onChange={(e) => setBlackoutReason(e.target.value)} /></label><button className="button button--primary" type="submit"><CalendarDays /> Add blackout</button></form><div className="blackout-list">{blackouts.map((blackout) => <div className="blackout-item" key={blackout.id}><div><strong>{formatDateTime(blackout.starts_at)} → {formatDateTime(blackout.ends_at)}</strong><span>{blackout.reason || 'No reason supplied'}</span></div><button className="button button--tiny button--danger" type="button" onClick={() => void removeBlackout(blackout.id)}><Trash2 /> Remove</button></div>)}{blackouts.length === 0 ? <p className="empty-note">No blackout periods configured.</p> : null}</div></section>
     </div> : null}
-  </div></AdminShell>
+  </div>{dialog ? <ActionDialog request={dialog} onClose={() => setDialog(null)} /> : null}</AdminShell>
 }
 
 function AdminShell({ children, onSignOut }: { children: React.ReactNode; onSignOut?: () => void }) {

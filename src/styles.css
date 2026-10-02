@@ -726,3 +726,67 @@ p { color: var(--muted); line-height: 1.7; }
 .booking-cleanup-toolbar { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 20px; }
 .booking-cleanup-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:16px; padding-top:14px; border-top:1px solid #e1e9e3; }
 .booking-cleanup-actions small { color:#65756b; max-width:540px; }
+
+/* Shared CKEFA Media action dialogues, used for booking and admin actions. */
+.action-dialog-backdrop {
+  position: fixed;
+  z-index: 1500;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 20, 14, .72);
+  backdrop-filter: blur(7px);
+}
+.action-dialog {
+  width: min(100%, 520px);
+  max-height: min(90vh, 850px);
+  overflow-y: auto;
+  padding: clamp(22px, 4vw, 34px);
+  border-radius: 24px;
+  border: 1px solid #dbe3dd;
+  background: #fff;
+  box-shadow: 0 26px 100px rgba(4, 25, 14, .36);
+}
+.action-dialog__top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.action-dialog__icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 16px;
+  background: #eef6da;
+  color: #3e690c;
+}
+.action-dialog__icon--danger { background: #ffedeb; color: #aa3128; }
+.action-dialog__icon svg { width: 22px; height: 22px; }
+.action-dialog__close { display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; width: 36px; height: 36px; border-radius: 50%; }
+.action-dialog__close:hover { background: var(--soft); }
+.action-dialog__close svg { width: 20px; height: 20px; }
+.action-dialog h2 { margin: 0 0 9px; font-size: clamp(1.15rem, 3vw, 1.4rem); }
+.action-dialog p { margin: 0 0 20px; font-size: .92rem; line-height: 1.65; overflow-wrap: anywhere; }
+.action-dialog__field { margin: 0 0 16px; }
+.action-dialog__field input { width: 100%; }
+.action-dialog__acknowledgement {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 14px;
+  margin: 15px 0 18px;
+  border: 1px solid #e1e7e0;
+  border-radius: 13px;
+  color: var(--ink);
+  background: #f8faf7;
+  cursor: pointer;
+  font-size: .83rem;
+  line-height: 1.6;
+}
+.action-dialog__acknowledgement input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--green-dark); }
+.action-dialog__error { margin-bottom: 14px; color: #a5261d; background: #fff1ef; border-radius: 10px; padding: 11px; font-size: .83rem; }
+.action-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.action-dialog__actions button { min-height: 44px; }
+.booking-protected-label { color: #2f6225; font-weight: 700; }
+@media (max-width: 440px) {
+  .action-dialog__actions { flex-direction: column-reverse; }
+  .action-dialog__actions button { width: 100%; }
+}
