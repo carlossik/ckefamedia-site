@@ -148,6 +148,7 @@ export type BookingRecord = {
   confirmation_email_error: string | null
   hold_expires_at: string | null
   created_at: string
+  archived_at: string | null
 }
 
 export type BlackoutPeriod = {

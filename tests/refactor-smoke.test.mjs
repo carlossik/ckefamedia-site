@@ -139,3 +139,35 @@ test('booking confirmation references the project logo and distinguishes balance
   assert.match(notification, /No further payment required/)
   assert.match(notification, /Payment received — you're all set/)
 })
+
+test('administrators can archive bookings and protect paid bookings from test deletion', () => {
+  const admin = read('src/pages/AdminPage.tsx')
+  const migration = read('supabase/migrations/202610020001_booking_alerts_and_cleanup.sql')
+  for (const label of ['Archive booking', 'Restore booking', 'Delete test booking permanently']) {
+    assert.match(admin, new RegExp(label))
+  }
+  assert.match(admin, /entered !== booking\.reference/)
+  assert.match(admin, /supabase\.rpc\('delete_media_test_booking'/)
+  assert.match(migration, /is_media_admin\('administrator'\)/)
+  assert.match(migration, /current_booking\.amount_paid_pence <> 0/)
+  assert.match(migration, /current_booking\.customer_payment_reference is not null/)
+  assert.match(migration, /confirmation_email_sent_at is not null/)
+  assert.match(migration, /Archive the booking before permanently deleting it/)
+  assert.match(migration, /as restrictive for delete to authenticated/)
+})
+
+test('new booking email alert is server-only, deduplicated and sent to two destinations', () => {
+  const notify = read('supabase/functions/booking-notification/index.ts')
+  const migration = read('supabase/migrations/202610020001_booking_alerts_and_cleanup.sql')
+  const config = read('supabase/config.toml')
+  assert.match(notify, /BOOKING_ALERT_WEBHOOK_SECRET/)
+  assert.match(notify, /BOOKING_ALERT_EMAILS/)
+  assert.match(notify, /info@ckefamedia\.com,carlossik@gmail\.com/)
+  assert.match(notify, /'INSERT'/)
+  assert.match(notify, /'media_bookings'/)
+  assert.match(notify, /RESEND_API_KEY/)
+  assert.match(notify, /media_booking_alert_deliveries/)
+  assert.match(migration, /booking_id uuid primary key/)
+  assert.match(config, /\[functions\.booking-notification\]/)
+  assert.doesNotMatch(read('src/lib/booking.ts'), /booking-notification/)
+})

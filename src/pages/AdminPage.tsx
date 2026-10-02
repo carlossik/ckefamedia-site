@@ -93,6 +93,8 @@ export function AdminPage() {
   const [access, setAccess] = useState<AdminAccess | null>(null)
   const [tab, setTab] = useState<'bookings' | 'services' | 'availability' | 'discounts'>('bookings')
   const [bookings, setBookings] = useState<BookingRecord[]>([])
+  const [showArchivedBookings, setShowArchivedBookings] = useState(false)
+  const [cleanupBookingId, setCleanupBookingId] = useState<string | null>(null)
   const [services, setServices] = useState<ServicePackage[]>([])
   const [settings, setSettings] = useState<Settings>(defaultSettings)
   const [blackouts, setBlackouts] = useState<BlackoutPeriod[]>([])
@@ -435,6 +437,49 @@ export function AdminPage() {
     if (!error) await loadAdminData()
   }
 
+  // Archiving hides records from this portal; it never alters their financial history.
+  // Permanent deletion is restricted server-side to unpaid, unconfirmed test records.
+  const archiveBooking = async (booking: BookingRecord, restore: boolean) => {
+    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
+    const verb = restore ? 'Restore' : 'Archive'
+    if (!window.confirm(`${verb} booking ${booking.reference} for ${booking.customer_name}? ${restore ? 'It will return to the active list.' : 'It will be hidden from the active list, not deleted. This does not cancel the booking or release its slot.'}`)) return
+    setCleanupBookingId(booking.id)
+    const { data, error } = await supabase.from('media_bookings')
+      .update({ archived_at: restore ? null : new Date().toISOString() })
+      .eq('id', booking.id)
+      .select('id')
+    setCleanupBookingId(null)
+    setMessage(error ? error.message : !data?.length ? 'No booking was updated. Check administrator permissions.' : `${booking.reference} ${restore ? 'restored' : 'archived'}.`)
+    if (!error && data?.length) await loadAdminData()
+  }
+
+  const deleteTestBooking = async (booking: BookingRecord) => {
+    if (!supabase || access?.role !== 'administrator' || cleanupBookingId) return
+    if (!booking.archived_at) { setMessage('Archive this booking first, then select Delete test booking.'); return }
+    if (booking.amount_paid_pence > 0 || booking.customer_payment_reference || booking.confirmation_email_sent_at) {
+      setMessage('A payment or customer confirmation is recorded for this booking. Keep it archived instead.')
+      return
+    }
+    const entered = window.prompt(`To permanently delete this UNPAID test booking, type its exact reference:
+${booking.reference}
+
+This cannot be undone.`)
+    if (entered !== booking.reference) { if (entered !== null) setMessage('Booking reference did not match. Nothing deleted.'); return }
+    if (!window.confirm(`Permanently delete ${booking.reference}? This cannot be undone.`)) return
+    setCleanupBookingId(booking.id)
+    const { error } = await supabase.rpc('delete_media_test_booking', {
+      requested_booking_id: booking.id,
+      typed_booking_reference: entered,
+    })
+    setCleanupBookingId(null)
+    setMessage(error ? error.message : `Test booking ${booking.reference} permanently deleted.`)
+    if (!error) await loadAdminData()
+  }
+
+  const visibleBookings = bookings.filter((booking) => showArchivedBookings ? Boolean(booking.archived_at) : !booking.archived_at)
+  const activeBookingCount = bookings.filter((booking) => !booking.archived_at).length
+  const archivedBookingCount = bookings.length - activeBookingCount
+
   if (!isSupabaseConfigured) return <AdminShell><div className="admin-state"><Settings2 /><h1>Administration setup required</h1><p>Add the Supabase project URL and publishable key to the environment before staff can sign in.</p><Link className="button button--primary" to="/">Return to website</Link></div></AdminShell>
   if (loading) return <AdminShell><div className="admin-state"><LoaderCircle className="spin" /><h1>Loading CKEFA Media</h1></div></AdminShell>
   if (!signedIn) return <AdminShell><form className="login-card" onSubmit={signIn}><span className="eyebrow">Staff access</span><h1>Sign in to CKEFA Media</h1><p>Manage bookings, payment verification, availability and service pricing.</p>{message ? <div className="alert alert--error">{message}</div> : null}<label className="field"><span>Email address</span><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label><label className="field"><span>Password</span><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label><button className="button button--primary button--full" type="submit"><LogIn /> Sign in</button><button className="button button--outline button--full" type="button" onClick={() => void sendPasswordReset()}>Forgot password?</button></form></AdminShell>
@@ -446,9 +491,13 @@ export function AdminPage() {
     <div className="admin-tabs" role="tablist"><button className={tab === 'bookings' ? 'active' : ''} onClick={() => setTab('bookings')}><CalendarDays /> Bookings</button><button className={tab === 'services' ? 'active' : ''} onClick={() => setTab('services')}><Video /> Services & pricing</button><button className={tab === 'discounts' ? 'active' : ''} onClick={() => setTab('discounts')}><BadgePercent /> Discount codes</button><button className={tab === 'availability' ? 'active' : ''} onClick={() => setTab('availability')}><Settings2 /> Availability & payments</button></div>
 
     {tab === 'bookings' ? <section className="admin-panel admin-panel--bookings">
-      <div className="admin-panel__heading"><div><h2>Booking workflow</h2><p>{bookings.length} booking{bookings.length === 1 ? '' : 's'} recorded. Each card shows the commercial and operational state separately so the next action is clear.</p></div></div>
+      <div className="admin-panel__heading"><div><h2>Booking workflow</h2><p>{activeBookingCount} active · {archivedBookingCount} archived. Archiving hides a booking but does not cancel it or change payment records.</p></div></div>
+      <div className="booking-cleanup-toolbar">
+        <button className={!showArchivedBookings ? 'button button--small button--primary' : 'button button--small button--outline'} type="button" onClick={() => setShowArchivedBookings(false)}>Active ({activeBookingCount})</button>
+        <button className={showArchivedBookings ? 'button button--small button--primary' : 'button button--small button--outline'} type="button" onClick={() => setShowArchivedBookings(true)}>Archived ({archivedBookingCount})</button>
+      </div>
       <div className="booking-workflow-list">
-        {bookings.map((booking) => {
+        {visibleBookings.map((booking) => {
           const quotedTotal = booking.quoted_total_pence ?? 0
           const finalTotal = booking.net_total_pence ?? (booking.quoted_total_pence !== null ? netTotalForBooking(booking, quotedTotal) : 0)
           const balanceDue = Math.max(finalTotal - booking.amount_paid_pence, 0)
@@ -510,10 +559,18 @@ export function AdminPage() {
                 </> : null}
                 {booking.operations_status === 'refund_pending' ? <button className="button button--small button--danger" type="button" onClick={() => void runBookingAction(booking, 'refund')}><RotateCcw /> Mark refunded</button> : null}
               </div>
+              {access.role === 'administrator' ? <div className="booking-cleanup-actions">
+                {booking.archived_at ? <>
+                  <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void archiveBooking(booking, true)}>Restore booking</button>
+                  {booking.amount_paid_pence === 0 && !booking.customer_payment_reference && !booking.confirmation_email_sent_at ?
+                    <button className="button button--small button--danger" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void deleteTestBooking(booking)}><Trash2 /> Delete test booking permanently</button> :
+                    <small>Payment or confirmation history is retained. This booking cannot be permanently deleted through the portal.</small>}
+                </> : <button className="button button--small button--outline" type="button" disabled={Boolean(cleanupBookingId)} onClick={() => void archiveBooking(booking, false)}>Archive booking</button>}
+              </div> : null}
             </div>
           </article>
         })}
-        {bookings.length === 0 ? <div className="empty-cell">No bookings have been received yet.</div> : null}
+        {visibleBookings.length === 0 ? <div className="empty-cell">{showArchivedBookings ? 'No archived bookings.' : 'No active bookings.'}</div> : null}
       </div>
     </section> : null}
 

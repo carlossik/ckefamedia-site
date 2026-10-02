@@ -721,3 +721,8 @@ p { color: var(--muted); line-height: 1.7; }
   .discount-box__form, .discount-code-card { align-items: stretch; flex-direction: column; }
   .discount-code-card__actions { justify-content: flex-start; }
 }
+
+/* Administrator-only booking cleanup */
+.booking-cleanup-toolbar { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 20px; }
+.booking-cleanup-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:16px; padding-top:14px; border-top:1px solid #e1e9e3; }
+.booking-cleanup-actions small { color:#65756b; max-width:540px; }
